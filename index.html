@@ -49,12 +49,24 @@
             cursor: grabbing;
         }
 
-        .cube {
+        .cube-wrapper {
             width: var(--cube-size);
             height: var(--cube-size);
             position: relative;
             transform-style: preserve-3d;
-            transition: transform 0.05s linear;
+            /* No transition on wrapper by default to keep drag responsive */
+        }
+
+        .cube-wrapper.animating {
+            transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+
+        .cube {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            transform-style: preserve-3d;
+            transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
         }
 
         .face {
@@ -176,14 +188,44 @@
             display: flex;
             flex-direction: column;
             gap: 0.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .control-group label {
+        .control-group:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .control-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .control-header label {
             font-size: 0.85rem;
             font-weight: 500;
             color: #cbd5e1;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+        }
+
+        .btn-set-top {
+            background: rgba(99, 102, 241, 0.2);
+            color: #c7d2fe;
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            font-family: 'Outfit', sans-serif;
+            transition: all 0.2s ease;
+        }
+
+        .btn-set-top:hover {
+            background: rgba(99, 102, 241, 0.4);
+            color: white;
         }
 
         select {
@@ -266,7 +308,7 @@
     <div class="sidebar">
         <div>
             <h1>3D Customizer</h1>
-            <p>Customize each face of the shapes and drag to rotate it in full 3D space.</p>
+            <p>Select patterns for each side. Assign any side as the primary Top face, then drag around the shape.</p>
         </div>
 
         <div class="controls" id="controls-container">
@@ -281,18 +323,29 @@
 
     <div class="scene-container">
         <div class="ambient-glow"></div>
-        <div class="cube" id="cube">
-            <div class="face front" id="face-front" data-pattern="star"></div>
-            <div class="face back" id="face-back" data-pattern="grid"></div>
-            <div class="face right" id="face-right" data-pattern="dots"></div>
-            <div class="face left" id="face-left" data-pattern="stripes"></div>
-            <div class="face top" id="face-top" data-pattern="circle"></div>
-            <div class="face bottom" id="face-bottom" data-pattern="none"></div>
+        <div class="cube-wrapper" id="cube-wrapper">
+            <div class="cube" id="cube">
+                <!-- Faces correspond dynamically to the numbered sides -->
+                <div class="face front" id="face-front"></div>
+                <div class="face back" id="face-back"></div>
+                <div class="face left" id="face-left"></div>
+                <div class="face right" id="face-right"></div>
+                <div class="face top" id="face-top"></div>
+                <div class="face bottom" id="face-bottom"></div>
+            </div>
         </div>
     </div>
 
     <script>
-        const faces = ['front', 'back', 'left', 'right', 'top', 'bottom'];
+        const sidesConfig = [
+            { id: 1, name: 'Side 1', faceClass: 'front', defaultPattern: 'star' },
+            { id: 2, name: 'Side 2', faceClass: 'back', defaultPattern: 'heart' },
+            { id: 3, name: 'Side 3', faceClass: 'left', defaultPattern: 'grid' },
+            { id: 4, name: 'Side 4', faceClass: 'right', defaultPattern: 'stripes' },
+            { id: 5, name: 'Side 5', faceClass: 'top', defaultPattern: 'dots' },
+            { id: 6, name: 'Side 6', faceClass: 'bottom', defaultPattern: 'none' }
+        ];
+
         const patternOptions = ['none', 'dots', 'stripes', 'grid', 'star', 'circle', 'triangle', 'square', 'heart'];
 
         const svgs = {
@@ -303,49 +356,62 @@
             heart: '<svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>'
         };
 
-        const initialPatterns = {
-            front: 'star',
-            back: 'heart',
-            right: 'stripes',
-            left: 'grid',
-            top: 'dots',
-            bottom: 'none'
-        };
-
         const controlsContainer = document.getElementById('controls-container');
 
-        faces.forEach(face => {
+        // Transforms to apply to `.cube` so that the corresponding face physical orientation faces up (+Y)
+        const topTransforms = {
+            top: 'rotateX(0deg) rotateY(0deg) rotateZ(0deg)',
+            bottom: 'rotateX(180deg) rotateY(0deg) rotateZ(0deg)',
+            front: 'rotateX(-90deg) rotateY(0deg) rotateZ(0deg)',
+            back: 'rotateX(90deg) rotateY(0deg) rotateZ(0deg)',
+            left: 'rotateX(0deg) rotateY(0deg) rotateZ(-90deg)',
+            right: 'rotateX(0deg) rotateY(0deg) rotateZ(90deg)'
+        };
+
+        sidesConfig.forEach(side => {
             const group = document.createElement('div');
             group.className = 'control-group';
 
+            const header = document.createElement('div');
+            header.className = 'control-header';
+
             const label = document.createElement('label');
-            label.textContent = face + ' Face';
+            label.textContent = side.name;
+
+            const btnSetTop = document.createElement('button');
+            btnSetTop.className = 'btn-set-top';
+            btnSetTop.textContent = 'Set as Top';
+            btnSetTop.addEventListener('click', () => {
+                setCubeTopFace(side.faceClass);
+            });
+
+            header.appendChild(label);
+            header.appendChild(btnSetTop);
 
             const select = document.createElement('select');
-            select.dataset.face = face;
 
             patternOptions.forEach(opt => {
                 const option = document.createElement('option');
                 option.value = opt;
                 option.textContent = opt.charAt(0).toUpperCase() + opt.slice(1);
-                if (opt === initialPatterns[face]) {
+                if (opt === side.defaultPattern) {
                     option.selected = true;
                 }
                 select.appendChild(option);
             });
 
-            select.addEventListener('change', (e) => updateFace(face, e.target.value));
+            select.addEventListener('change', (e) => updateFaceDetails(side.faceClass, e.target.value));
 
-            group.appendChild(label);
+            group.appendChild(header);
             group.appendChild(select);
             controlsContainer.appendChild(group);
 
-            // initialize
-            updateFace(face, initialPatterns[face]);
+            // initialize view
+            updateFaceDetails(side.faceClass, side.defaultPattern);
         });
 
-        function updateFace(face, patternLabel) {
-            const faceEl = document.getElementById('face-' + face);
+        function updateFaceDetails(faceClass, patternLabel) {
+            const faceEl = document.getElementById('face-' + faceClass);
             faceEl.dataset.pattern = patternLabel;
 
             if (svgs[patternLabel]) {
@@ -355,8 +421,9 @@
             }
         }
 
-        // 3D Rotation Logic
-        const cube = document.getElementById('cube');
+        // 3D Rotation Logic over wrapper
+        const cubeWrapper = document.getElementById('cube-wrapper');
+        const innerCube = document.getElementById('cube');
         const scene = document.querySelector('.scene-container');
         const autoRotateCheckbox = document.getElementById('auto-rotate');
 
@@ -365,12 +432,36 @@
         let isDragging = false;
         let pX = 0, pY = 0;
 
-        cube.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
+        cubeWrapper.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
+
+        // Function allowing user to set whichever side as "Top" and orienting the camera
+        function setCubeTopFace(faceClass) {
+            // 1. Rotate the inner cube so the correct face faces up
+            innerCube.style.transform = topTransforms[faceClass];
+
+            // 2. Smoothly animate the camera (wrapper) back to default isometric angled view
+            currentX = -25;
+            currentY = -45;
+            cubeWrapper.classList.add('animating');
+            cubeWrapper.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
+
+            // disable animation class after transition so dragging is instant again
+            setTimeout(() => {
+                cubeWrapper.classList.remove('animating');
+            }, 600);
+
+            // cancel auto-rotate if it's on so the user can observe their new setting
+            if (autoRotateCheckbox.checked) {
+                autoRotateCheckbox.checked = false;
+            }
+        }
 
         function startDrag(x, y) {
             isDragging = true;
             pX = x;
             pY = y;
+            // Stop transitions during drag
+            cubeWrapper.classList.remove('animating');
             // Automatically turn off auto-rotation when the user interacts
             if (autoRotateCheckbox.checked) {
                 autoRotateCheckbox.checked = false;
@@ -401,10 +492,7 @@
             currentY += movementX * 0.4;
             currentX -= movementY * 0.4;
 
-            // Apply bounds to X rotation to avoid flipping upside down if preferred
-            // currentX = Math.max(-90, Math.min(90, currentX));
-
-            cube.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
+            cubeWrapper.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
         }
 
         scene.addEventListener('mousemove', (e) => {
@@ -420,7 +508,7 @@
             if (!isDragging && autoRotateCheckbox.checked) {
                 currentY += 0.3;
                 currentX += 0.15;
-                cube.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
+                cubeWrapper.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
             }
             requestAnimationFrame(animate);
         }
