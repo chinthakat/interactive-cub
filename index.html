@@ -365,12 +365,20 @@
         let isDragging = false;
         let pX = 0, pY = 0;
 
+        // Momentum variables
+        let velocityX = 0;
+        let velocityY = 0;
+        let lastMoveTime = 0;
+
         cube.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
 
         function startDrag(x, y) {
             isDragging = true;
             pX = x;
             pY = y;
+            velocityX = 0; // Reset momentum
+            velocityY = 0;
+            lastMoveTime = Date.now();
             // Automatically turn off auto-rotation when the user interacts
             if (autoRotateCheckbox.checked) {
                 autoRotateCheckbox.checked = false;
@@ -381,30 +389,46 @@
             startDrag(e.clientX, e.clientY);
         });
 
-        window.addEventListener('mouseup', () => { isDragging = false; });
-        scene.addEventListener('mouseleave', () => { isDragging = false; });
+        window.addEventListener('mouseup', endDrag);
+        scene.addEventListener('mouseleave', endDrag);
 
         // Touch support
         scene.addEventListener('touchstart', (e) => {
             startDrag(e.touches[0].clientX, e.touches[0].clientY);
         }, { passive: true });
 
-        window.addEventListener('touchend', () => { isDragging = false; });
+        window.addEventListener('touchend', endDrag);
+
+        function endDrag() {
+            isDragging = false;
+            // If the user stopped moving the mouse before releasing, kill the momentum
+            if (Date.now() - lastMoveTime > 50) {
+                velocityX = 0;
+                velocityY = 0;
+            }
+        }
 
         function handleDrag(clientX, clientY) {
             if (!isDragging) return;
+            const now = Date.now();
+            const dt = Math.max(1, now - lastMoveTime);
+
             const movementX = clientX - pX;
             const movementY = clientY - pY;
+
             pX = clientX;
             pY = clientY;
+            lastMoveTime = now;
+
+            // Calculate velocity (rotation units per millisecond * arbitrary scale for feel)
+            velocityY = (movementX / dt) * 15;
+            velocityX = -(movementY / dt) * 15;
 
             currentY += movementX * 0.4;
             currentX -= movementY * 0.4;
 
             // Apply bounds to X rotation to avoid flipping upside down if preferred
             // currentX = Math.max(-90, Math.min(90, currentX));
-
-            cube.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
         }
 
         scene.addEventListener('mousemove', (e) => {
@@ -415,12 +439,24 @@
             handleDrag(e.touches[0].clientX, e.touches[0].clientY);
         }, { passive: true });
 
-        // Auto rotation
+        // Animation loop for auto-rotation and momentum
         function animate() {
-            if (!isDragging && autoRotateCheckbox.checked) {
-                currentY += 0.3;
-                currentX += 0.15;
-                cube.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
+            if (!isDragging) {
+                if (autoRotateCheckbox.checked) {
+                    currentY += 0.3;
+                    currentX += 0.15;
+                    cube.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
+                } else if (Math.abs(velocityX) > 0.01 || Math.abs(velocityY) > 0.01) {
+                    // Apply momentum
+                    currentX += velocityX;
+                    currentY += velocityY;
+
+                    // Apply friction (0.95 = 5% speed loss per frame)
+                    velocityX *= 0.95;
+                    velocityY *= 0.95;
+
+                    cube.style.transform = `rotateX(${currentX}deg) rotateY(${currentY}deg)`;
+                }
             }
             requestAnimationFrame(animate);
         }
